@@ -2,13 +2,16 @@ import threading
 import warnings
 import pygal
 import pandas as pd
+import numpy as np
 from statsmodels.tsa.api import SimpleExpSmoothing
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import psutil
 import resource
+
+INTERVAL_SECONDS_DATA = 2
 
 warnings.filterwarnings("ignore")
 mydateparser = lambda x: datetime.strptime(x, "%d/%m/%Y %H:%M:%S")
@@ -33,16 +36,26 @@ class ThreadCPU(threading.Thread):
         print("{} started!".format(self.getName()))
 
         data = pd.read_csv('cpuData.txt'
-                           , header=None
+                           , dtype={'date': str, 'cpu': np.float16}
                            , sep=';'
-                           , date_parser=mydateparser
-                           , names=['date', 'cpu']
-                           , parse_dates=['date'])
+                           , names=['date', 'cpu'])
+
+        rowns_invalid = []
+        for index, row in data.iterrows():
+            if not isinstance(row['date'], str):
+                rowns_invalid.append(index)
+
+        if len(rowns_invalid) > 0:
+            data = data.drop(rowns_invalid)
+
+        data['date'] = data['date'].apply(mydateparser)
 
         # Simple Exponential Smoothing
         fit = SimpleExpSmoothing(data['cpu']).fit(smoothing_level=0.2, optimized=False)
         data['cpu'] = fit.fittedvalues
-        print(data.head())
+        print(data.tail())
+
+        data = data.tail(50)
 
         plot_data(data.to_numpy(), is_cpu=True)
 
@@ -54,17 +67,27 @@ class ThreadMemory(threading.Thread):
         print("{} started!".format(self.getName()))
 
         data = pd.read_csv('memoriaData.txt'
-                           , header=None
+                           , dtype={'date': str, 'memory': np.float16}
                            , sep=';'
-                           , date_parser=mydateparser
-                           , names=['date', 'memory']
-                           , parse_dates=['date'])
+                           , names=['date', 'memory'])
+
+        rowns_invalid = []
+        for index, row in data.iterrows():
+            if not isinstance(row['date'], str):
+                rowns_invalid.append(index)
+
+        if len(rowns_invalid) > 0:
+            data = data.drop(rowns_invalid)
+
+        data['date'] = data['date'].apply(mydateparser)
 
         # Simple Exponential Smoothing
         fit = SimpleExpSmoothing(data['memory']).fit(smoothing_level=0.2, optimized=False)
 
         data['memory'] = fit.fittedvalues
-        print(data.head())
+        print(data.tail())
+
+        data = data.tail(50)
 
         plot_data(data.to_numpy())
 
@@ -88,7 +111,7 @@ class ThreadData(threading.Thread):
                 text = datetime.now().strftime("%d/%m/%Y %H:%M:%S; ") + str(psutil.virtual_memory().percent)
                 arquivoMemoria.write(text + '\n')
 
-            time.sleep(2)  # Pretend to work for a second
+            time.sleep(INTERVAL_SECONDS_DATA)  # Pretend to work for a second
 
         print("{} finished!".format(self.getName()))
 
