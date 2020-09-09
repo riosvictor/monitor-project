@@ -1,4 +1,4 @@
-import threading
+from threading import Thread
 import warnings
 import pygal
 import pandas as pd
@@ -7,8 +7,9 @@ from statsmodels.tsa.api import SimpleExpSmoothing
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, date, timedelta
 import psutil
+
 import resource
 
 INTERVAL_SECONDS_DATA = 2
@@ -18,78 +19,95 @@ mydateparser = lambda x: datetime.strptime(x, "%d/%m/%Y %H:%M:%S")
 
 
 # MONITOR
-def plot_data(serie, is_cpu=False):
+def plot_data(series, labels, is_cpu=False):
     line_chart = pygal.DateTimeLine(
         x_label_rotation=35,
         truncate_label=-1,
-        x_value_formatter=lambda dt: dt.strftime('%d/%m/%Y - %H:%M:%S')
+        x_value_formatter=lambda dt: dt.strftime('%d/%m/%Y - %H:%M:%S'),
+        show_dots=False
     )
 
     line_chart.title = 'CPU' if is_cpu else 'Memory'
-    line_chart.add('CPU' if is_cpu else 'Memory', serie)
+    for idx, val in enumerate(series):
+        line_chart.add(labels[idx], val)
     # line_chart.render_to_png('cpuGraph.png' if is_cpu else 'memoryGraph.png')
     line_chart.render_in_browser()
 
 
-class ThreadCPU(threading.Thread):
+def format_values(frame):
+    rowns_invalid = []
+    for index, row in frame.iterrows():
+        if not isinstance(row['date'], str):
+            rowns_invalid.append(index)
+
+    if len(rowns_invalid) > 0:
+        frame = frame.drop(rowns_invalid)
+
+    frame['date'] = frame['date'].apply(mydateparser)
+    return frame
+
+
+def filter_day(frame):
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    yesterday_str = yesterday.strftime("%Y-%m-%d")
+    tomorrow = today + timedelta(days=1)
+    tomorrow_str = tomorrow.strftime("%Y-%m-%d")
+
+    return frame[(frame['date'] > yesterday_str) & (frame['date'] < tomorrow_str)]
+
+
+class ThreadCPU(Thread):
+    def __init__(self, name, daemon, small=False):
+        Thread.__init__(self, name=name, daemon=daemon)
+        self.small = small
+
     def run(self):  # Default called function with mythread.start()
         print("{} started!".format(self.getName()))
 
-        data = pd.read_csv('cpuData.txt'
-                           , dtype={'date': str, 'cpu': np.float16}
-                           , sep=';'
-                           , names=['date', 'cpu'])
+        data = pd.read_csv('cpuData.txt', dtype={'date': str, 'cpu': np.float16}, sep=';', names=['date', 'cpu'])
 
-        rowns_invalid = []
-        for index, row in data.iterrows():
-            if not isinstance(row['date'], str):
-                rowns_invalid.append(index)
-
-        if len(rowns_invalid) > 0:
-            data = data.drop(rowns_invalid)
-
-        data['date'] = data['date'].apply(mydateparser)
+        data = format_values(data)
 
         # Simple Exponential Smoothing
         fit = SimpleExpSmoothing(data['cpu']).fit(smoothing_level=0.2, optimized=False)
         data['cpu'] = fit.fittedvalues
-        print(data.tail())
+        # END
 
-        data = data.tail(50)
+        data = filter_day(data)
 
-        plot_data(data.to_numpy(), is_cpu=True)
+        if self.small:
+            data = data.tail(50)
+
+        plot_data([data.to_numpy()], ['0.2'], is_cpu=True)
 
         print("{} finished!".format(self.getName()))
 
 
-class ThreadMemory(threading.Thread):
+class ThreadMemory(Thread):
+    def __init__(self, name, daemon, small=False):
+        Thread.__init__(self, name=name, daemon=daemon)
+        self.small = small
+
     def run(self, tk=None):  # Default called function with mythread.start()
         print("{} started!".format(self.getName()))
 
-        data = pd.read_csv('memoriaData.txt'
-                           , dtype={'date': str, 'memory': np.float16}
-                           , sep=';'
-                           , names=['date', 'memory'])
+        data = pd.read_csv('memoriaData.txt', dtype={'date': str, 'memory': np.float16}, sep=';',
+                           names=['date', 'memory'])
 
-        rowns_invalid = []
-        for index, row in data.iterrows():
-            if not isinstance(row['date'], str):
-                rowns_invalid.append(index)
-
-        if len(rowns_invalid) > 0:
-            data = data.drop(rowns_invalid)
-
-        data['date'] = data['date'].apply(mydateparser)
+        data = format_values(data)
 
         # Simple Exponential Smoothing
         fit = SimpleExpSmoothing(data['memory']).fit(smoothing_level=0.2, optimized=False)
-
         data['memory'] = fit.fittedvalues
-        print(data.tail())
+        # END
 
-        data = data.tail(50)
+        data = filter_day(data)
 
-        plot_data(data.to_numpy())
+        if self.small:
+            data = data.tail(50)
+
+        plot_data([data.to_numpy()], ['0.2'])
 
         print("{} finished!".format(self.getName()))
 
@@ -98,7 +116,7 @@ class ThreadMemory(threading.Thread):
 # GETDATA
 
 
-class ThreadData(threading.Thread):
+class ThreadData(Thread):
     def run(self):  # Default called function with mythread.start()
         print("{} started!".format(self.getName()))
         while True:
@@ -123,15 +141,31 @@ class ThreadData(threading.Thread):
 
 def open_monitor_cpu():
     # ...Instantiate a thread and pass a unique ID to it
-    thread_cpu = ThreadCPU(name="Thread CPU", daemon=False)
+    thread_cpu = ThreadCPU(name="Thread CPU 1", daemon=False)
     thread_cpu.start()  # ...Start the thread, run method will be invoked
     thread_cpu.join()
 
+
 def open_monitor_memory():
     # ...Instantiate a thread and pass a unique ID to it
-    thread_memory = ThreadMemory(name="Thread Memory", daemon=False)
+    thread_memory = ThreadMemory(name="Thread Memo 1", daemon=False)
     thread_memory.start()  # ...Start the thread, run method will be invoked
     thread_memory.join()
+
+
+#
+def open_monitor_cpu_sm():
+    # ...Instantiate a thread and pass a unique ID to it
+    thread_cpu2 = ThreadCPU(name="Thread CPU 2", daemon=False, small=True)
+    thread_cpu2.start()  # ...Start the thread, run method will be invoked
+    thread_cpu2.join()
+
+
+def open_monitor_memory_sm():
+    # ...Instantiate a thread and pass a unique ID to it
+    thread_memory2 = ThreadMemory(name="Thread Memo 2", daemon=False, small=True)
+    thread_memory2.start()  # ...Start the thread, run method will be invoked
+    thread_memory2.join()
 
 
 def main():
@@ -148,6 +182,7 @@ def main():
 
     # Create the menu
     menu = QMenu()
+
     action1 = QAction("Monitor CPU")
     action1.triggered.connect(open_monitor_cpu)
     menu.addAction(action1)
@@ -156,9 +191,18 @@ def main():
     action2.triggered.connect(open_monitor_memory)
     menu.addAction(action2)
 
-    quit = QAction("Sair")
-    quit.triggered.connect(app.quit)
-    menu.addAction(quit)
+    # SMALL
+    action3 = QAction("Monitor CPU Small")
+    action3.triggered.connect(open_monitor_cpu_sm)
+    menu.addAction(action3)
+
+    action4 = QAction("Monitor Memory Small")
+    action4.triggered.connect(open_monitor_memory_sm)
+    menu.addAction(action4)
+
+    sair = QAction("Sair")
+    sair.triggered.connect(app.quit)
+    menu.addAction(sair)
 
     # Add the menu to the tray
     tray.setContextMenu(menu)
