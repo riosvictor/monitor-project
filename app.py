@@ -1,3 +1,4 @@
+import socket
 from threading import Thread
 import warnings
 import pygal
@@ -9,6 +10,8 @@ from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction
 import time
 from datetime import datetime, date, timedelta
 import psutil
+import requests
+from requests.exceptions import HTTPError
 
 import resource
 
@@ -16,6 +19,7 @@ INTERVAL_SECONDS_DATA = 2
 
 warnings.filterwarnings("ignore")
 mydateparser = lambda x: datetime.strptime(x, "%d/%m/%Y %H:%M:%S")
+url = 'https://api-monitor-utfpr.herokuapp.com/monitor'
 
 
 # MONITOR
@@ -168,6 +172,153 @@ def open_monitor_memory_sm():
     thread_memory2.join()
 
 
+# API Functions
+def send_monitor_cpu_sm():
+    computer_name = socket.gethostname()
+    today = date.today()
+    date_str = today.strftime("%d/%m/%Y")
+
+    #
+
+    data = pd.read_csv('cpuData.txt', dtype={'date': str, 'cpu': np.float16}, sep=';', names=['date', 'cpu'])
+
+    data = format_values(data)
+
+    # Simple Exponential Smoothing
+    fit = SimpleExpSmoothing(data['cpu']).fit(smoothing_level=0.2, optimized=False)
+    data['cpu'] = fit.fittedvalues
+
+    data = filter_day(data)
+    data = data.tail(50)['cpu'].tolist()
+    #
+
+    new_list = [round(e, 2) for e in data]
+
+    obj = {
+        'computer': computer_name,
+        'date': date_str,
+        'type': 'cpu',
+        'info_array': new_list,
+    }
+
+    print(obj)
+    
+    try:
+        r = requests.post(url, json=obj)
+
+        if r.status_code == 200:
+            print('Success!')
+        else:
+            print(f'#{r.status_code} Error.')
+    except HTTPError as http_err:
+        print(f'HTTP error occurred: {http_err}')  # Python 3.6
+    except Exception as err:
+        print(f'Other error occurred: {err}')  # Python 3.6
+
+
+def send_monitor_memory_sm():
+    computer_name = socket.gethostname()
+    today = date.today()
+    date_str = today.strftime("%d/%m/%Y")
+
+    #
+
+    data = pd.read_csv('memoriaData.txt', dtype={'date': str, 'memory': np.float16}, sep=';', names=['date', 'memory'])
+
+    data = format_values(data)
+
+    # Simple Exponential Smoothing
+    fit = SimpleExpSmoothing(data['memory']).fit(smoothing_level=0.2, optimized=False)
+    data['memory'] = fit.fittedvalues
+
+    data = filter_day(data)
+    data = data.tail(50)['memory'].tolist()
+    #
+
+    new_list = [round(e, 2) for e in data]
+
+    obj = {
+        'computer': computer_name,
+        'date': date_str,
+        'type': 'memory',
+        'info_array': new_list,
+    }
+
+    print(obj)
+
+    try:
+        r = requests.post(url, json=obj)
+
+        if r.status_code == 200:
+            print('Success!')
+        else:
+            print(f'#{r.status_code} Error.')
+    except HTTPError as http_err:
+        print(f'HTTP error occurred: {http_err}')  # Python 3.6
+    except Exception as err:
+        print(f'Other error occurred: {err}')  # Python 3.6
+
+
+def get_data_memory_computers():
+    today = date.today()
+    date_str = today.strftime("%d/%m/%Y")
+
+    #
+
+    obj = {
+        'date': date_str,
+        'type': 'memory',
+    }
+
+    print(obj)
+
+    try:
+        r = requests.get(url, json=obj)
+
+        if r.status_code == 200:
+            print('Success!')
+
+            f = open("memory_series.txt", "w")
+            f.write(r.text)
+            f.close()
+        else:
+            print(f'#{r.status_code} Error.')
+    except HTTPError as http_err:
+        print(f'HTTP error occurred: {http_err}')  # Python 3.6
+    except Exception as err:
+        print(f'Other error occurred: {err}')  # Python 3.6
+
+
+def get_data_cpu_computers():
+    today = date.today()
+    date_str = today.strftime("%d/%m/%Y")
+
+    #
+
+    obj = {
+        'date': date_str,
+        'type': 'cpu',
+    }
+
+    print(obj)
+
+    try:
+        r = requests.get(url, json=obj)
+
+        if r.status_code == 200:
+            print('Success!')
+
+            f = open("cpu_series.txt", "w")
+            f.write(r.text)
+            f.close()
+        else:
+            print(f'#{r.status_code} Error.')
+    except HTTPError as http_err:
+        print(f'HTTP error occurred: {http_err}')  # Python 3.6
+    except Exception as err:
+        print(f'Other error occurred: {err}')  # Python 3.6
+
+
 def main():
     app = QApplication([])
     app.setQuitOnLastWindowClosed(False)
@@ -199,6 +350,26 @@ def main():
     action4 = QAction("Monitor Memory Small")
     action4.triggered.connect(open_monitor_memory_sm)
     menu.addAction(action4)
+
+    # API
+    actionApiCpu = QAction("Send Monitor CPU Small")
+    actionApiCpu.triggered.connect(send_monitor_cpu_sm)
+    menu.addAction(actionApiCpu)
+
+    actionApiMemory = QAction("Send Monitor Memory Small")
+    actionApiMemory.triggered.connect(send_monitor_memory_sm)
+    menu.addAction(actionApiMemory)
+
+    #
+    actionGetCpu = QAction("Get All Monitor CPU Small")
+    actionGetCpu.triggered.connect(get_data_cpu_computers)
+    menu.addAction(actionGetCpu)
+
+    actionGetMemory = QAction("Get All Monitor Memory Small")
+    actionGetMemory.triggered.connect(get_data_memory_computers)
+    menu.addAction(actionGetMemory)
+
+
 
     sair = QAction("Sair")
     sair.triggered.connect(app.quit)
